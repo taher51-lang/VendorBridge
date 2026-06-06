@@ -1,1 +1,0 @@
-"""VendorBridge ERP – Utilities Package."""
