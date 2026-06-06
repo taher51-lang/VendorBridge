@@ -8,74 +8,68 @@ from marshmallow import Schema, fields, validate
 
 
 class QuotationItemSchema(Schema):
-    """
-    Validates / serializes a quotation line item.
-
-    Fields to define:
-        - id: Dump only
-        - rfq_item_id: Required, FK reference
-        - unit_price: Required, positive Decimal
-        - quantity: Required, positive Decimal
-        - tax_rate: Optional, Decimal (0-100)
-        - line_total: Dump only (calculated)
-        - notes: Optional
-    """
-    # TODO: Define fields with decimal precision validators
-    pass
+    """Validates / serializes a quotation line item."""
+    id           = fields.Str(dump_only=True)
+    rfq_item_id  = fields.Str(load_default=None)
+    unit_price   = fields.Decimal(required=True, places=4, as_string=True)
+    quantity     = fields.Decimal(required=True, places=3, as_string=True)
+    tax_rate     = fields.Decimal(load_default=0, places=2, as_string=True)
+    line_total   = fields.Decimal(dump_only=True, places=2, as_string=True)
+    notes        = fields.Str(load_default=None)
 
 
 class QuotationCreateSchema(Schema):
-    """
-    Validates the creation / submission of a new quotation.
-
-    Fields to define:
-        - rfq_id: Required, UUID
-        - delivery_days: Required, positive Integer
-        - validity_days: Optional, positive Integer
-        - currency: Optional, default 'INR', max 3
-        - notes: Optional
-        - items: Required, Nested list of QuotationItemSchema (min 1)
-    """
-    # TODO: Define fields
-    pass
+    """Validates the creation of a new quotation."""
+    rfq_id        = fields.Str(required=True)
+    delivery_days = fields.Int(required=True, validate=validate.Range(min=1))
+    validity_days = fields.Int(load_default=None, validate=validate.Range(min=1))
+    currency      = fields.Str(load_default="INR", validate=validate.Length(max=3))
+    is_interstate = fields.Bool(load_default=False)
+    notes         = fields.Str(load_default=None)
+    items         = fields.List(
+        fields.Nested(QuotationItemSchema),
+        required=True,
+        validate=validate.Length(min=1)
+    )
 
 
 class QuotationUpdateSchema(Schema):
-    """
-    Validates quotation edits (only while status=draft).
-
-    Same fields as create but all optional.
-    May also include a 'submit' boolean to transition to 'submitted'.
-    """
-    # TODO: Define partial fields
-    pass
+    """Validates partial updates on a draft quotation."""
+    delivery_days = fields.Int(validate=validate.Range(min=1))
+    validity_days = fields.Int(validate=validate.Range(min=1))
+    currency      = fields.Str(validate=validate.Length(max=3))
+    is_interstate = fields.Bool()
+    notes         = fields.Str()
+    items         = fields.List(fields.Nested(QuotationItemSchema))
 
 
 class QuotationResponseSchema(Schema):
-    """
-    Serializes a Quotation for API output.
-
-    Fields to define:
-        - id, quote_number, rfq_id, vendor_id, revision_no
-        - subtotal, tax_amount, total_amount, currency
-        - delivery_days, validity_days, notes
-        - status, submitted_at
-        - items: Nested list of QuotationItemSchema
-        - created_at, updated_at
-    """
-    # TODO: Define output fields with nested items
-    pass
+    """Serializes a Quotation for API output."""
+    id             = fields.Str()
+    quote_number   = fields.Str()
+    rfq_id         = fields.Str()
+    vendor_id      = fields.Str()
+    revision_no    = fields.Int()
+    subtotal       = fields.Decimal(places=2, as_string=True)
+    tax_amount     = fields.Decimal(places=2, as_string=True)
+    cgst_amount    = fields.Decimal(places=2, as_string=True)
+    sgst_amount    = fields.Decimal(places=2, as_string=True)
+    igst_amount    = fields.Decimal(places=2, as_string=True)
+    total_amount   = fields.Decimal(places=2, as_string=True)
+    currency       = fields.Str()
+    is_interstate  = fields.Bool()
+    delivery_days  = fields.Int()
+    validity_days  = fields.Int()
+    notes          = fields.Str()
+    status         = fields.Str()
+    submitted_at   = fields.DateTime(allow_none=True)
+    created_at     = fields.DateTime()
+    updated_at     = fields.DateTime()
+    items          = fields.List(fields.Nested(QuotationItemSchema), dump_default=[])
 
 
 class QuotationCompareSchema(Schema):
-    """
-    Response schema for the quotation comparison view.
-    Groups quotations for the same RFQ side by side.
-
-    Fields to define:
-        - rfq_id, rfq_title
-        - quotations: Nested list of QuotationResponseSchema
-        - recommended_quotation_id: Optional (lowest cost / best score)
-    """
-    # TODO: Define comparison output
-    pass
+    """Response schema for the quotation comparison view."""
+    rfq_id                    = fields.Str()
+    quotations                = fields.List(fields.Nested(QuotationResponseSchema))
+    recommended_quotation_id  = fields.Str(allow_none=True)
