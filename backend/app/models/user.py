@@ -61,7 +61,11 @@ class User(BaseModel, Base):
     )
 
     # ── Password helpers ──────────────────────────────────────────
-
+    def to_dict(self):
+        d = super().to_dict()
+        d.pop("password_hash", None)
+        return d
+        
     def set_password(self, raw_password: str) -> None:
         """Hash *raw_password* with bcrypt and store in password_hash."""
         self.password_hash = generate_password_hash(raw_password).decode("utf-8")

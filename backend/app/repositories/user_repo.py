@@ -1,9 +1,12 @@
 """
 VendorBridge ERP – User Repository
 ====================================
-Data-access layer for User model.
+Data-access layer for the User model.
 """
 
+from datetime import datetime
+
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.user import User
@@ -11,76 +14,57 @@ from app.repositories.base_repo import BaseRepository
 
 
 class UserRepository(BaseRepository):
-    """
-    Extends BaseRepository with User-specific queries.
-    """
+    """Extends BaseRepository with User-specific queries."""
 
     model = User
 
     def __init__(self, db: Session):
-        """Initialize with a SQLAlchemy session."""
-        # TODO: Call super().__init__(db)
-        pass
+        super().__init__(db)
 
     def get_by_email(self, email: str):
         """
-        Look up a user by their email address.
-
-        Args:
-            email: The email to search for (case-insensitive).
-
-        Returns:
-            User instance or None.
+        Look up a user by email address (case-insensitive).
+        Returns User instance or None.
         """
-        # TODO: Implement:
-        #   1. Query User where func.lower(User.email) == email.lower()
-        #   2. Filter deleted_at IS NULL
-        #   3. Return .first()
-        pass
+        return (
+            self.db.query(User)
+            .filter(
+                func.lower(User.email) == email.lower(),
+                User.deleted_at.is_(None),
+            )
+            .first()
+        )
 
     def get_by_role(self, role: str, page: int = 1, per_page: int = 20):
         """
-        List users filtered by their role.
-
-        Args:
-            role: One of 'admin', 'procurement_officer', 'manager', 'vendor'.
-            page, per_page: Pagination.
-
-        Returns:
-            Tuple of (list[User], total_count).
+        List users filtered by role with pagination.
+        Returns (list[User], total_count).
         """
-        # TODO: Implement paginated query filtered by User.role == role
-        pass
+        query = (
+            self.db.query(User)
+            .filter(User.role == role, User.deleted_at.is_(None))
+        )
+        total = query.count()
+        results = query.offset((page - 1) * per_page).limit(per_page).all()
+        return results, total
 
     def update_last_login(self, user_id: str):
-        """
-        Set last_login_at to now for the given user.
-
-        Args:
-            user_id: UUID of the user.
-        """
-        # TODO: Implement:
-        #   1. Fetch user by id
-        #   2. Set user.last_login_at = datetime.utcnow()
-        #   3. Commit
-        pass
+        """Set last_login_at to now for the given user."""
+        user = self.get_by_id(user_id)
+        if user:
+            user.last_login_at = datetime.utcnow()
+            self.db.commit()
 
     def verify_email(self, user_id: str):
-        """
-        Mark a user's email as verified.
-
-        Args:
-            user_id: UUID of the user.
-        """
-        # TODO: Implement:
-        #   1. Fetch user by id
-        #   2. Set user.email_verified_at = datetime.utcnow()
-        #   3. Commit
-        pass
+        """Mark a user's email as verified."""
+        user = self.get_by_id(user_id)
+        if user:
+            user.email_verified_at = datetime.utcnow()
+            self.db.commit()
 
     def deactivate(self, user_id: str):
-        """
-        Disable a user account (set is_active = False).
-        """
-        # TODO: Implement soft deactivation (not deletion)
-        pass
+        """Disable a user account (set is_active = False)."""
+        user = self.get_by_id(user_id)
+        if user:
+            user.is_active = False
+            self.db.commit()

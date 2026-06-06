@@ -2,121 +2,174 @@
 VendorBridge ERP – Auth Service
 ================================
 Handles registration, login, token refresh, and password management.
-Sits between auth_routes and user_repo.  Never touches the HTTP layer.
 """
 
+import uuid
+from datetime import datetime
+
+from flask_jwt_extended import create_access_token, create_refresh_token
 from sqlalchemy.orm import Session
 
-from app.repositories.user_repo import UserRepository
 from app.models.user import User
+from app.repositories.user_repo import UserRepository
 
 
 class AuthService:
-    """
-    Business logic for authentication and account lifecycle.
-    """
+    """Business logic for authentication and account lifecycle."""
 
     def __init__(self, db: Session):
-        """
-        Initialize repositories and any helper services.
+        self.user_repo = UserRepository(db)
+        self.db = db
 
-        Dependencies:
-            - UserRepository(db)
-            - NotificationService(db) — for welcome emails
-        """
-        # TODO: self.user_repo = UserRepository(db)
-        # TODO: self.notification_svc = NotificationService(db)
-        pass
-
-    def register(self, data: dict):
+    def register(self, data: dict) -> User:
         """
         Register a new user account.
-
-        Args:
-            data: Validated dict from UserCreateSchema.
-
-        Returns:
-            The newly created User object.
+        Raises ValueError if email already exists.
         """
-        # 1. Check if email already exists via user_repo.get_by_email()
-        #    → raise ConflictError if found
-        # 2. Instantiate User model with data fields
-        # 3. Call user.set_password(data['password'])
-        # 4. If role == 'vendor', also create a Vendor profile
-        # 5. Persist via user_repo.create(user)
-        # 6. Send welcome notification / email
-        # 7. Return the user object
-        pass
+        existing = self.user_repo.get_by_email(data["email"])
+        if existing:
+            raise ValueError("An account with this email already exists.")
 
-    def login(self, email: str, password: str):
+        user = User(
+            id=str(uuid.uuid4()),
+            email=data["email"].lower().strip(),
+            full_name=data.get("full_name", ""),
+            role=data["role"],
+            phone=data.get("phone"),
+        )
+        user.set_password(data["password"])
+
+        # If registering as vendor, a Vendor profile will be created
+        # by VendorService after this returns — keep auth concerns separate.
+
+        self.user_repo.create(user)
+        return user
+
+    def login(self, email: str, password: str) -> dict:
         """
         Authenticate a user and return JWT tokens.
-
-        Returns:
-            Dict with access_token, refresh_token, and user info.
+        Raises ValueError on bad credentials or inactive account.
         """
-        # 1. Fetch user by email via user_repo.get_by_email()
-        #    → raise AuthenticationError if not found
-        # 2. Verify password via user.check_password()
-        #    → raise AuthenticationError if mismatch
-        # 3. Check user.is_active → raise ForbiddenError if inactive
-        # 4. Update last_login_at via user_repo.update_last_login()
-        # 5. Generate access_token and refresh_token using
-        #    flask_jwt_extended.create_access_token / create_refresh_token
-        #    with identity=user.id and additional_claims={role: user.role}
-        # 6. Return {access_token, refresh_token, user: user.to_dict()}
-        pass
+        user = self.user_repo.get_by_email(email)
+        if not user:
+            raise ValueError("Invalid email or password.")
 
-    def refresh_token(self, user_id: str):
+        if not user.check_password(password):
+            raise ValueError("Invalid email or password.")
+
+        if not user.is_active:
+            raise PermissionError("This account has been deactivated. Contact support.")
+
+        self.user_repo.update_last_login(user.id)
+
+        additional_claims = {"role": user.role}
+        access_token = create_access_token(
+            identity=user.id,
+            additional_claims=additional_claims,
+        )
+        refresh_token = create_refresh_token(
+            identity=user.id,
+            additional_claims=additional_claims,
+        )
+
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "user": user.to_dict(),
+        }
+
+    def refresh_token(self, user_id: str) -> dict:
         """
         Issue a new access token from a valid refresh token.
-
-        Args:
-            user_id: Extracted from the refresh token's identity.
-
-        Returns:
-            Dict with new access_token.
+        Raises ValueError if user not found or inactive.
         """
-        # 1. Fetch user by id → raise NotFoundError if missing
-        # 2. Check is_active
-        # 3. Create new access_token
-        # 4. Return {access_token}
-        pass
+        user = self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found.")
+        if not user.is_active:
+            raise PermissionError("Account is deactivated.")
 
-    def change_password(self, user_id: str, current_password: str, new_password: str):
+        access_token = create_access_token(
+            identity=user.id,
+            additional_claims={"role": user.role},
+        )
+        return {"access_token": access_token}
+
+    def change_password(self, user_id: str, current_password: str, new_password: str) -> None:
         """
         Change a user's password after verifying the current one.
+        Raises ValueError if current password is wrong.
         """
-        # 1. Fetch user by id
-        # 2. Verify current_password via user.check_password()
-        #    → raise AuthenticationError if wrong
-        # 3. Call user.set_password(new_password)
-        # 4. Persist via user_repo.update(user)
-        pass
+        user = self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found.")
 
-    def request_password_reset(self, email: str):
-        """
-        Generate a password-reset token and email it to the user.
-        """
-        # 1. Fetch user by email (silently return if not found – no leak)
-        # 2. Generate a time-limited token (e.g. JWT or itsdangerous)
-        # 3. Email the reset link via notification_svc.send_password_reset()
-        pass
+        if not user.check_password(current_password):
+            raise ValueError("Current password is incorrect.")
 
-    def reset_password(self, token: str, new_password: str):
+        user.set_password(new_password)
+        self.user_repo.update(user)
+
+    def request_password_reset(self, email: str) -> None:
+        """
+        Generate a password-reset token and email it.
+        Silently does nothing if email not found (no leak).
+        """
+        user = self.user_repo.get_by_email(email)
+        if not user:
+            return  # Silent — don't reveal whether email exists
+
+        # Generate a short-lived reset token using JWT
+        reset_token = create_access_token(
+            identity=user.id,
+            additional_claims={"purpose": "password_reset"},
+            expires_delta=__import__("datetime").timedelta(minutes=30),
+        )
+
+        # TODO: plug into email_sender when Flask-Mail is configured:
+        # email_sender.send_password_reset(user.email, reset_token)
+        print(f"[DEV] Password reset token for {email}: {reset_token}")
+
+    def reset_password(self, token: str, new_password: str) -> None:
         """
         Reset a user's password using a valid reset token.
+        Raises ValueError if token is invalid or expired.
         """
-        # 1. Decode and verify the token
-        # 2. Fetch user by the id embedded in the token
-        # 3. Call user.set_password(new_password)
-        # 4. Persist
-        pass
+        from flask_jwt_extended import decode_token
+        try:
+            decoded = decode_token(token)
+        except Exception:
+            raise ValueError("Invalid or expired reset token.")
 
-    def get_profile(self, user_id: str):
-        """
-        Return the authenticated user's profile data.
-        """
-        # 1. Fetch user by id → raise NotFoundError if missing
-        # 2. Return user.to_dict()
-        pass
+        claims = decoded.get("additional_claims", {}) or decoded.get("sub", {})
+        if decoded.get("additional_claims", {}).get("purpose") != "password_reset":
+            raise ValueError("Invalid reset token.")
+
+        user_id = decoded.get("sub")
+        user = self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found.")
+
+        user.set_password(new_password)
+        self.user_repo.update(user)
+
+    def get_profile(self, user_id: str) -> dict:
+        """Return the authenticated user's profile data."""
+        user = self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found.")
+        return user.to_dict()
+
+    def update_profile(self, user_id: str, data: dict) -> User:
+        """Update allowed profile fields (full_name, phone, avatar_url)."""
+        user = self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found.")
+
+        allowed_fields = ["full_name", "phone", "avatar_url"]
+        for field in allowed_fields:
+            if field in data:
+                setattr(user, field, data[field])
+
+        self.user_repo.update(user)
+        return user
