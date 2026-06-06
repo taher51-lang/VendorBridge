@@ -1,3 +1,0 @@
-$kind: collection
-name: Auth
-description: 'Authentication endpoints — register, login, token refresh, and profile management.'
