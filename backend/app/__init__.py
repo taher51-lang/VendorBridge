@@ -86,4 +86,4 @@ def _create_tables(app: Flask) -> None:
         import app.models  # noqa: F401
 
         Base.metadata.create_all(bind=engine, checkfirst=True)
-        print("✔ Tables verified / created successfully")
+        print("[OK] Tables verified / created successfully")

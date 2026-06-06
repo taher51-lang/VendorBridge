@@ -4,11 +4,13 @@ VendorBridge ERP – Notification Service
 Handles in-app notifications and email dispatch coordination.
 """
 
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.repositories.base_repo import BaseRepository
 from app.models.audit import Notification, ActivityLog
 from app.models.user import User
+from app.utils.email_sender import send_notification_email, send_password_reset as utils_send_password_reset
 
 
 class NotificationService:
@@ -18,15 +20,7 @@ class NotificationService:
     """
 
     def __init__(self, db: Session):
-        """
-        Initialize with DB session and email_sender utility.
-
-        Dependencies:
-            - db session
-            - email_sender utility (from app.utils.email_sender)
-        """
-        # TODO: Store db session and initialize email_sender
-        pass
+        self.db = db
 
     def create_notification(self, user_id: str, type: str, title: str, body: str = None,
                             entity_type: str = None, entity_id: str = None):
@@ -44,10 +38,20 @@ class NotificationService:
         Returns:
             The created Notification.
         """
-        # 1. Instantiate Notification model
-        # 2. Persist via db.add() + db.commit()
-        # 3. Return notification
-        pass
+        notification = Notification(
+            user_id=user_id,
+            type=type,
+            title=title,
+            body=body,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            is_read=False,
+            read_at=None
+        )
+        self.db.add(notification)
+        self.db.commit()
+        self.db.refresh(notification)
+        return notification
 
     def mark_read(self, notification_id: str, user_id: str):
         """
@@ -57,38 +61,62 @@ class NotificationService:
             notification_id: UUID of the notification.
             user_id: Must match the notification's user_id (authorization check).
         """
-        # 1. Fetch notification by id
-        # 2. Validate notification.user_id == user_id
-        # 3. Set read_at = utcnow
-        # 4. Persist
-        pass
+        notification = self.db.query(Notification).filter(
+            Notification.id == notification_id,
+            Notification.deleted_at.is_(None)
+        ).first()
+        if not notification:
+            return None
+        if notification.user_id != user_id:
+            from app.exceptions import ForbiddenError
+            raise ForbiddenError("You are not authorized to read this notification.")
+        
+        notification.is_read = True
+        notification.read_at = datetime.now(timezone.utc)
+        self.db.commit()
+        return notification
 
     def mark_all_read(self, user_id: str):
         """
         Mark all unread notifications for a user as read.
         """
-        # 1. Query Notification where user_id AND read_at IS NULL
-        # 2. Bulk update read_at = utcnow
-        # 3. Commit
-        pass
+        unread = self.db.query(Notification).filter(
+            Notification.user_id == user_id,
+            Notification.is_read == False,
+            Notification.deleted_at.is_(None)
+        ).all()
+        now = datetime.now(timezone.utc)
+        for notif in unread:
+            notif.is_read = True
+            notif.read_at = now
+        self.db.commit()
 
     def get_user_notifications(self, user_id: str, page: int = 1, per_page: int = 20,
                                 unread_only: bool = False):
         """
         Paginated list of notifications for a user.
         """
-        # 1. Build query filtered by user_id
-        # 2. If unread_only, add read_at IS NULL filter
-        # 3. Order by created_at DESC
-        # 4. Paginate
-        pass
+        query = self.db.query(Notification).filter(
+            Notification.user_id == user_id,
+            Notification.deleted_at.is_(None)
+        )
+        if unread_only:
+            query = query.filter(Notification.is_read == False)
+        
+        query = query.order_by(Notification.created_at.desc())
+        total = query.count()
+        results = query.offset((page - 1) * per_page).limit(per_page).all()
+        return results, total
 
     def get_unread_count(self, user_id: str) -> int:
         """
         Return the count of unread notifications for a user.
         """
-        # 1. Query count of Notification where user_id AND read_at IS NULL
-        pass
+        return self.db.query(Notification).filter(
+            Notification.user_id == user_id,
+            Notification.is_read == False,
+            Notification.deleted_at.is_(None)
+        ).count()
 
     # ── Convenience methods for specific notification types ───────
 
@@ -97,34 +125,68 @@ class NotificationService:
         Send 'rfq_invite' notifications to a list of vendors.
         Also queue email notifications.
         """
-        # 1. For each vendor_id:
-        #    a. Find user_id from vendor profile
-        #    b. Create in-app notification
-        #    c. Queue email via email_sender
-        pass
+        from app.models.vendor import Vendor
+        for vendor_id in vendor_ids:
+            vendor = self.db.query(Vendor).filter(Vendor.id == vendor_id).first()
+            if vendor and vendor.user_id:
+                title = f"Invitation to bid for RFQ: {rfq.title}"
+                body = f"You have been invited to submit a quotation for RFQ {rfq.rfq_number}. Deadline is {rfq.deadline}."
+                self.create_notification(
+                    user_id=vendor.user_id,
+                    type="rfq_invite",
+                    title=title,
+                    body=body,
+                    entity_type="rfq",
+                    entity_id=rfq.id
+                )
+                if vendor.user and vendor.user.email:
+                    send_notification_email(vendor.user.email, title, body)
 
     def notify_approval_required(self, workflow, approver_id: str):
         """
         Notify an approver that a workflow step is awaiting their action.
         """
-        # 1. Create notification with type='approval_required'
-        # 2. Queue email to approver
-        pass
+        user = self.db.query(User).filter(User.id == approver_id).first()
+        if user:
+            title = f"Approval Required for Quotation {workflow.quotation.quote_number}"
+            body = f"Quotation {workflow.quotation.quote_number} is selected and requires your approval step."
+            self.create_notification(
+                user_id=approver_id,
+                type="approval_required",
+                title=title,
+                body=body,
+                entity_type="approval_workflow",
+                entity_id=workflow.id
+            )
+            if user.email:
+                send_notification_email(user.email, title, body)
 
     def notify_po_issued(self, po):
         """
         Notify vendor that a PO has been issued.
         """
-        # 1. Create notification for vendor's user
-        # 2. Queue email
-        pass
+        from app.models.vendor import Vendor
+        vendor = self.db.query(Vendor).filter(Vendor.id == po.vendor_id).first()
+        if vendor and vendor.user_id:
+            title = f"Purchase Order {po.po_number} Issued"
+            body = f"Purchase Order {po.po_number} has been issued to you for RFQ {po.rfq.rfq_number}."
+            self.create_notification(
+                user_id=vendor.user_id,
+                type="po_issued",
+                title=title,
+                body=body,
+                entity_type="purchase_order",
+                entity_id=po.id
+            )
+            if vendor.user and vendor.user.email:
+                send_notification_email(vendor.user.email, title, body)
 
     def send_password_reset(self, user: User, reset_link: str):
         """
         Send a password reset email.
         """
-        # 1. Call email_sender.send_password_reset(user.email, reset_link)
-        pass
+        if user.email:
+            utils_send_password_reset(user.email, reset_link)
 
     # ── Audit Logging ─────────────────────────────────────────────
 
@@ -141,6 +203,13 @@ class NotificationService:
             metadata: Optional dict with old/new values.
             ip_address: Client IP (from request).
         """
-        # 1. Instantiate ActivityLog with all fields
-        # 2. db.add() + db.commit()
-        pass
+        log = ActivityLog(
+            actor_id=actor_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action=action,
+            metadata_=metadata,
+            ip_address=ip_address
+        )
+        self.db.add(log)
+        self.db.commit()

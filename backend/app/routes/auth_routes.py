@@ -6,7 +6,7 @@ Endpoints for registration, login, token refresh, profile, and password manageme
 
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
-
+from app.utils.security import roles_required
 from app.database import get_db
 from app.services.auth_service import AuthService
 from app.utils.response_helper import success_response, error_response
@@ -22,6 +22,8 @@ def _get_service():
 
 
 @auth_bp.route("/register", methods=["POST"])
+@jwt_required()
+@roles_required("admin")
 def register():
     """POST /api/v1/auth/register — Register a new user."""
     data = request.get_json(silent=True)

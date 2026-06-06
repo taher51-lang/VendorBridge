@@ -39,10 +39,20 @@ class AuthService:
         )
         user.set_password(data["password"])
 
-        # If registering as vendor, a Vendor profile will be created
-        # by VendorService after this returns — keep auth concerns separate.
-
         self.user_repo.create(user)
+
+        # If registering as vendor, a Vendor profile is created automatically for convenience
+        if user.role == "vendor":
+            from app.models.vendor import Vendor
+            vendor_profile = Vendor(
+                id=str(uuid.uuid4()),
+                user_id=user.id,
+                company_name=f"{user.full_name or 'Vendor'} Inc.",
+                status="active"
+            )
+            self.db.add(vendor_profile)
+            self.db.commit()
+
         return user
 
     def login(self, email: str, password: str) -> dict:
