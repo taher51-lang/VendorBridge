@@ -91,11 +91,10 @@ export default function Vendors() {
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 text-sm font-medium capitalize border-b-2 transition-colors ${
-                  activeTab === tab
+                className={`px-4 py-2 text-sm font-medium capitalize border-b-2 transition-colors ${activeTab === tab
                     ? 'border-zinc-900 text-zinc-900'
                     : 'border-transparent text-zinc-500 hover:text-zinc-700'
-                }`}
+                  }`}
               >
                 {tab}
               </button>
@@ -214,11 +213,10 @@ export default function Vendors() {
                 <button
                   onClick={handleAction}
                   disabled={approveMutation.isPending || suspendMutation.isPending || blacklistMutation.isPending}
-                  className={`flex-1 text-white text-sm px-4 py-2 rounded-lg transition-colors disabled:opacity-50 ${
-                    actionModal.type === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700' :
-                    actionModal.type === 'suspend' ? 'bg-amber-600 hover:bg-amber-700' :
-                    'bg-red-600 hover:bg-red-700'
-                  }`}
+                  className={`flex-1 text-white text-sm px-4 py-2 rounded-lg transition-colors disabled:opacity-50 ${actionModal.type === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700' :
+                      actionModal.type === 'suspend' ? 'bg-amber-600 hover:bg-amber-700' :
+                        'bg-red-600 hover:bg-red-700'
+                    }`}
                 >
                   Confirm
                 </button>

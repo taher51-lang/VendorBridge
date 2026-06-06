@@ -105,8 +105,8 @@ export default function RFQs() {
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-2 text-sm font-medium capitalize border-b-2 transition-colors ${activeTab === tab
-                  ? 'border-zinc-900 text-zinc-900'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-700'
+                ? 'border-zinc-900 text-zinc-900'
+                : 'border-transparent text-zinc-500 hover:text-zinc-700'
                 }`}
             >
               {tab.replace('_', ' ')}

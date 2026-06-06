@@ -6,7 +6,7 @@ Handles in-app notifications and email dispatch coordination.
 
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-
+import logging
 from app.models.audit import Notification, ActivityLog
 from app.models.user import User
 from app.utils.email_sender import send_notification_email, send_password_reset as utils_send_password_reset
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class NotificationService:
     """
-    Creates in-app notifications and coordinates email alerts.
+    Creates in-app notifications and coordinates email alerts
     Also handles audit logging.
     """
 

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.repositories.approval_repo import ApprovalWorkflowRepository, ApprovalStepRepository
 from app.repositories.quotation_repo import QuotationRepository
 from app.models.approval import ApprovalWorkflow, ApprovalStep
+from app.services.notification_service import NotificationService
 
 
 class ApprovalService:

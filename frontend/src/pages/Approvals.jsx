@@ -89,11 +89,10 @@ export default function Approvals() {
               <div className="flex items-center gap-2 mt-4">
                 {workflow.steps?.map((step, idx) => (
                   <div key={step.id} className="flex items-center gap-2">
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium ${
-                      step.action === 'approved' ? 'bg-emerald-100 text-emerald-700' :
-                      step.action === 'rejected' ? 'bg-red-100 text-red-700' :
-                      'bg-zinc-100 text-zinc-500'
-                    }`}>
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium ${step.action === 'approved' ? 'bg-emerald-100 text-emerald-700' :
+                        step.action === 'rejected' ? 'bg-red-100 text-red-700' :
+                          'bg-zinc-100 text-zinc-500'
+                      }`}>
                       {step.step_number}
                     </div>
                     {idx < workflow.steps.length - 1 && (
@@ -161,11 +160,10 @@ export default function Approvals() {
                     remarks
                   })}
                   disabled={actionMutation.isPending}
-                  className={`flex-1 text-white text-sm px-4 py-2 rounded-lg transition-colors disabled:opacity-50 ${
-                    actionModal.action === 'approved'
+                  className={`flex-1 text-white text-sm px-4 py-2 rounded-lg transition-colors disabled:opacity-50 ${actionModal.action === 'approved'
                       ? 'bg-emerald-600 hover:bg-emerald-700'
                       : 'bg-red-500 hover:bg-red-600'
-                  }`}
+                    }`}
                 >
                   {actionMutation.isPending ? 'Submitting...' : 'Confirm'}
                 </button>

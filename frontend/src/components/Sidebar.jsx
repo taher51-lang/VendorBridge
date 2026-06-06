@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Building2, FileText, ClipboardList,
-  CheckSquare, ShoppingCart, Receipt, BarChart2, Bell, LogOut, Settings
+  CheckSquare, ShoppingCart, Receipt, BarChart2, Bell, LogOut, Settings, History
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import useAuthStore from '../store/authStore'
@@ -28,6 +28,7 @@ const navSections = [
       { to: '/purchase-orders', icon: ShoppingCart, label: 'Purchase Orders' },
       { to: '/invoices', icon: Receipt, label: 'Invoices' },
       { to: '/reports', icon: BarChart2, label: 'Reports' },
+      { to: '/activity', icon: History, label: 'Activity Logs' },
     ],
   },
   {

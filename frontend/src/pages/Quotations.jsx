@@ -212,11 +212,10 @@ export default function Quotations() {
                   <tr className="border-b border-zinc-200">
                     <th className="text-left py-3 pr-4 text-xs font-medium text-zinc-500 uppercase">Metric</th>
                     {comparison.quotations?.map((q) => (
-                      <th key={q.id} className={`text-left py-3 px-4 text-xs font-medium uppercase ${
-                        q.id === comparison.recommended_quotation_id
+                      <th key={q.id} className={`text-left py-3 px-4 text-xs font-medium uppercase ${q.id === comparison.recommended_quotation_id
                           ? 'text-emerald-700 bg-emerald-50 rounded-t-lg'
                           : 'text-zinc-500'
-                      }`}>
+                        }`}>
                         {q.quote_number}
                         {q.id === comparison.recommended_quotation_id && (
                           <span className="ml-1 text-emerald-600">★ Best</span>
@@ -240,13 +239,11 @@ export default function Quotations() {
                       <tr key={row.label} className="border-b border-zinc-100">
                         <td className="py-3 pr-4 text-zinc-500 text-xs">{row.label}</td>
                         {comparison.quotations?.map((q, i) => (
-                          <td key={q.id} className={`py-3 px-4 font-medium ${
-                            q.id === comparison.recommended_quotation_id ? 'bg-emerald-50' : ''
-                          } ${
-                            (row.key === 'total_amount' || row.key === 'delivery_days') && values[i] === minVal
+                          <td key={q.id} className={`py-3 px-4 font-medium ${q.id === comparison.recommended_quotation_id ? 'bg-emerald-50' : ''
+                            } ${(row.key === 'total_amount' || row.key === 'delivery_days') && values[i] === minVal
                               ? 'text-emerald-600'
                               : 'text-zinc-900'
-                          }`}>
+                            }`}>
                             {row.format(q[row.key])}
                           </td>
                         ))}

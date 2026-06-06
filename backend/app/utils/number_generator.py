@@ -1,14 +1,12 @@
-Generates unique, human-readable sequential numbers for
-RFQs, Quotations, POs, and Invoices.
+# Generates unique, human-readable sequential numbers for
+# RFQs, Quotations, POs, and Invoices.
 
-Format examples:
-    RFQ-2024-0001
-    QUO-2024-0001
-    PO-2024-0001
-    INV-2024-0001
-"""
+# Format examples:
+#     RFQ-2024-0001
+#     QUO-2024-0001
+#     PO-2024-0001
+#     INV-2024-0001
 
-from datetime import datetime, timezone
 
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session

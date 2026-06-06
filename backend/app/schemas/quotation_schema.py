@@ -71,5 +71,7 @@ class QuotationResponseSchema(Schema):
 class QuotationCompareSchema(Schema):
     """Response schema for the quotation comparison view."""
     rfq_id                    = fields.Str()
+    rfq_title                 = fields.Str()
+    rfq_number                = fields.Str()
     quotations                = fields.List(fields.Nested(QuotationResponseSchema))
     recommended_quotation_id  = fields.Str(allow_none=True)

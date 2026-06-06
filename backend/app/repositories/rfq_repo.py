@@ -63,21 +63,17 @@ class RFQRepository(BaseRepository):
         total = query.count()
         results = query.offset((page - 1) * per_page).limit(per_page).all()
         return results, total
-
     def get_all_paginated(self, page: int = 1, per_page: int = 20):
         """
-        Return all non-deleted RFQs, paginated.
-
-        Returns:
-            Tuple of (list[RFQ], total_count).
-        """
+    Return all non-deleted RFQs, paginated.
+    """
         query = self.db.query(RFQ).filter(
-            RFQ.status == status,
-            RFQ.deleted_at.is_(None)
-        )
+        RFQ.deleted_at.is_(None)
+    ).order_by(RFQ.created_at.desc())
         total = query.count()
         results = query.offset((page - 1) * per_page).limit(per_page).all()
         return results, total
+   
 
     def get_open_for_vendor(self, vendor_id: str, page: int = 1, per_page: int = 20):
         """
@@ -143,7 +139,6 @@ class RFQRepository(BaseRepository):
         self.db.commit()
         return assignments
 
-        return new_assignments
 
     def mark_vendor_viewed(self, rfq_id: str, vendor_id: str) -> bool:
         """

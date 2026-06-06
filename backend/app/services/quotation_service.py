@@ -17,6 +17,7 @@ class QuotationService:
     """
 
     def __init__(self, db: Session):
+        self.db = db
         self.quotation_repo = QuotationRepository(db)
         self.item_repo = QuotationItemRepository(db)
         self.rfq_repo = RFQRepository(db)
