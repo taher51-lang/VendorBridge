@@ -1,0 +1,1 @@
+"""VendorBridge ERP – Schemas Package."""
