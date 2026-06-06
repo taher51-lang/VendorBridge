@@ -7,10 +7,11 @@ Handles in-app notifications and email dispatch coordination.
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
-from app.repositories.base_repo import BaseRepository
 from app.models.audit import Notification, ActivityLog
 from app.models.user import User
 from app.utils.email_sender import send_notification_email, send_password_reset as utils_send_password_reset
+
+logger = logging.getLogger(__name__)
 
 
 class NotificationService:
@@ -22,8 +23,15 @@ class NotificationService:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_notification(self, user_id: str, type: str, title: str, body: str = None,
-                            entity_type: str = None, entity_id: str = None):
+    def create_notification(
+        self,
+        user_id: str,
+        type: str,
+        title: str,
+        body: str = None,
+        entity_type: str = None,
+        entity_id: str = None,
+    ) -> Notification:
         """
         Create an in-app notification for a user.
 
@@ -53,13 +61,16 @@ class NotificationService:
         self.db.refresh(notification)
         return notification
 
-    def mark_read(self, notification_id: str, user_id: str):
+    def mark_read(self, notification_id: str, user_id: str) -> bool:
         """
         Mark a notification as read.
 
         Args:
             notification_id: UUID of the notification.
             user_id: Must match the notification's user_id (authorization check).
+
+        Returns:
+            True if updated, False if not found or unauthorized.
         """
         notification = self.db.query(Notification).filter(
             Notification.id == notification_id,
@@ -76,7 +87,7 @@ class NotificationService:
         self.db.commit()
         return notification
 
-    def mark_all_read(self, user_id: str):
+    def mark_all_read(self, user_id: str) -> None:
         """
         Mark all unread notifications for a user as read.
         """
@@ -91,10 +102,18 @@ class NotificationService:
             notif.read_at = now
         self.db.commit()
 
-    def get_user_notifications(self, user_id: str, page: int = 1, per_page: int = 20,
-                                unread_only: bool = False):
+    def get_user_notifications(
+        self,
+        user_id: str,
+        page: int = 1,
+        per_page: int = 20,
+        unread_only: bool = False,
+    ):
         """
         Paginated list of notifications for a user.
+
+        Returns:
+            Tuple of (notifications_list, total_count).
         """
         query = self.db.query(Notification).filter(
             Notification.user_id == user_id,
@@ -120,10 +139,14 @@ class NotificationService:
 
     # ── Convenience methods for specific notification types ───────
 
-    def notify_vendors_rfq_invite(self, rfq, vendor_ids: list[str]):
+    def notify_vendors_rfq_invite(self, rfq, vendor_ids: list) -> None:
         """
-        Send 'rfq_invite' notifications to a list of vendors.
-        Also queue email notifications.
+        Send 'rfq_invite' notifications to a list of vendor IDs.
+        Looks up the user_id linked to each vendor profile.
+
+        Args:
+            rfq: The RFQ model instance.
+            vendor_ids: List of Vendor UUIDs (not User UUIDs).
         """
         from app.models.vendor import Vendor
         for vendor_id in vendor_ids:
@@ -142,7 +165,7 @@ class NotificationService:
                 if vendor.user and vendor.user.email:
                     send_notification_email(vendor.user.email, title, body)
 
-    def notify_approval_required(self, workflow, approver_id: str):
+    def notify_approval_required(self, workflow, approver_id: str) -> None:
         """
         Notify an approver that a workflow step is awaiting their action.
         """
@@ -161,7 +184,7 @@ class NotificationService:
             if user.email:
                 send_notification_email(user.email, title, body)
 
-    def notify_po_issued(self, po):
+    def notify_po_issued(self, po) -> None:
         """
         Notify vendor that a PO has been issued.
         """
@@ -181,17 +204,25 @@ class NotificationService:
             if vendor.user and vendor.user.email:
                 send_notification_email(vendor.user.email, title, body)
 
-    def send_password_reset(self, user: User, reset_link: str):
+    def send_password_reset(self, user: User, reset_link: str) -> None:
         """
         Send a password reset email.
+        (Email integration deferred — logs to console in dev mode.)
         """
         if user.email:
             utils_send_password_reset(user.email, reset_link)
 
     # ── Audit Logging ─────────────────────────────────────────────
 
-    def log_activity(self, actor_id: str, entity_type: str, entity_id: str,
-                     action: str, metadata: dict = None, ip_address: str = None):
+    def log_activity(
+        self,
+        actor_id: str,
+        entity_type: str,
+        entity_id: str,
+        action: str,
+        metadata: dict = None,
+        ip_address: str = None,
+    ) -> None:
         """
         Create an append-only audit log entry.
 

@@ -4,7 +4,9 @@ VendorBridge ERP – RFQ Schemas
 Marshmallow schemas for RFQ, RFQItem, and RFQVendorAssignment.
 """
 
-from marshmallow import Schema, fields, validate
+from datetime import datetime, timezone
+
+from marshmallow import Schema, fields, validate, validates, ValidationError
 
 
 from datetime import datetime, timezone

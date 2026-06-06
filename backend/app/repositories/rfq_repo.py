@@ -2,7 +2,10 @@
 VendorBridge ERP – RFQ Repository
 ===================================
 Data-access layer for RFQ, RFQItem, and RFQVendorAssignment models.
+Raw SQLAlchemy queries only — no business logic here.
 """
+
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -29,7 +32,10 @@ class RFQRepository(BaseRepository):
 
     def get_by_creator(self, user_id: str, page: int = 1, per_page: int = 20):
         """
-        List RFQs created by a specific procurement officer.
+        List RFQs created by a specific procurement officer, paginated.
+
+        Returns:
+            Tuple of (list[RFQ], total_count).
         """
         query = self.db.query(RFQ).filter(
             RFQ.created_by == user_id,
@@ -41,7 +47,29 @@ class RFQRepository(BaseRepository):
 
     def get_by_status(self, status: str, page: int = 1, per_page: int = 20):
         """
-        List RFQs filtered by status (draft, open, closed, cancelled).
+        List RFQs filtered by status, paginated.
+
+        Returns:
+            Tuple of (list[RFQ], total_count).
+        """
+        query = (
+            self.db.query(RFQ)
+            .filter(
+                RFQ.status == status,
+                RFQ.deleted_at.is_(None),
+            )
+            .order_by(RFQ.created_at.desc())
+        )
+        total = query.count()
+        results = query.offset((page - 1) * per_page).limit(per_page).all()
+        return results, total
+
+    def get_all_paginated(self, page: int = 1, per_page: int = 20):
+        """
+        Return all non-deleted RFQs, paginated.
+
+        Returns:
+            Tuple of (list[RFQ], total_count).
         """
         query = self.db.query(RFQ).filter(
             RFQ.status == status,
@@ -55,6 +83,9 @@ class RFQRepository(BaseRepository):
         """
         List open RFQs where the vendor has been invited.
         Joins through RFQVendorAssignment.
+
+        Returns:
+            Tuple of (list[RFQ], total_count).
         """
         query = self.db.query(RFQ).join(
             RFQVendorAssignment, RFQVendorAssignment.rfq_id == RFQ.id
@@ -68,7 +99,30 @@ class RFQRepository(BaseRepository):
         results = query.offset((page - 1) * per_page).limit(per_page).all()
         return results, total
 
-    def assign_vendors(self, rfq_id: str, vendor_ids: list[str]):
+    def get_for_vendor_all(self, vendor_id: str, page: int = 1, per_page: int = 20):
+        """
+        List all RFQs (any status) where the vendor has been assigned.
+
+        Returns:
+            Tuple of (list[RFQ], total_count).
+        """
+        query = (
+            self.db.query(RFQ)
+            .join(
+                RFQVendorAssignment,
+                RFQVendorAssignment.rfq_id == RFQ.id,
+            )
+            .filter(
+                RFQVendorAssignment.vendor_id == vendor_id,
+                RFQ.deleted_at.is_(None),
+            )
+            .order_by(RFQ.created_at.desc())
+        )
+        total = query.count()
+        results = query.offset((page - 1) * per_page).limit(per_page).all()
+        return results, total
+
+    def assign_vendors(self, rfq_id: str, vendor_ids: list) -> list:
         """
         Bulk-create RFQVendorAssignment rows for a list of vendor IDs.
         """
@@ -89,7 +143,9 @@ class RFQRepository(BaseRepository):
         self.db.commit()
         return assignments
 
-    def mark_vendor_viewed(self, rfq_id: str, vendor_id: str):
+        return new_assignments
+
+    def mark_vendor_viewed(self, rfq_id: str, vendor_id: str) -> bool:
         """
         Set viewed_at timestamp on the vendor's assignment.
         """
@@ -112,7 +168,7 @@ class RFQItemRepository(BaseRepository):
     def __init__(self, db: Session):
         super().__init__(db)
 
-    def get_by_rfq(self, rfq_id: str):
+    def get_by_rfq(self, rfq_id: str) -> list:
         """
         Return all items for a given RFQ, ordered by sort_order.
         """

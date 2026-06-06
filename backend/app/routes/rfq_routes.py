@@ -1,3 +1,7 @@
+Endpoints for creating, managing, and viewing Requests for Quotation.
+All routes require JWT authentication.
+"""
+
 from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
@@ -10,6 +14,24 @@ from app.models.vendor import Vendor
 
 rfq_bp = Blueprint("rfqs", __name__)
 
+_rfq_create_schema = RFQCreateSchema()
+_rfq_update_schema = RFQUpdateSchema()
+_vendor_invite_schema = VendorInviteSchema()
+
+
+def _get_rfq_service() -> RFQService:
+    """Instantiate RFQService with a fresh DB session."""
+    db = next(get_db())
+    return RFQService(db)
+
+
+def _get_vendor_service() -> VendorService:
+    """Instantiate VendorService with a fresh DB session."""
+    db = next(get_db())
+    return VendorService(db)
+
+
+# ── RFQ CRUD ──────────────────────────────────────────────────────
 
 @rfq_bp.route("/", methods=["POST"])
 @jwt_required()
@@ -44,7 +66,8 @@ def list_rfqs():
     """
     GET /api/v1/rfqs?page=1&per_page=20&status=open
     List RFQs with pagination.
-    Officers see all; vendors see only their assigned RFQs.
+      - Procurement officers / admins / managers: see all RFQs (with optional status filter).
+      - Vendors: see only RFQs they have been invited to.
     """
     db = next(get_db())
     service = RFQService(db)
@@ -83,8 +106,8 @@ def list_rfqs():
 def get_rfq(rfq_id):
     """
     GET /api/v1/rfqs/<rfq_id>
-    Get RFQ details with items and vendor assignments.
-    If caller is a vendor, mark the assignment as viewed.
+    Get RFQ details with line items and vendor assignments.
+    If caller is a vendor, marks their assignment as viewed/acknowledged.
     """
     db = next(get_db())
     user_id = get_current_user_id()
@@ -131,6 +154,17 @@ def update_rfq(rfq_id):
     except Exception as e:
         return error_response(str(e), 400)
 
+    try:
+        svc = _get_rfq_service()
+        rfq = svc.update_rfq(rfq_id, validated, officer_id)
+        return success_response(_rfq_to_dict(rfq), "RFQ updated successfully.")
+    except AppError as e:
+        return error_response(e.message, e.status_code)
+    except Exception:
+        return error_response("Failed to update RFQ.", 500)
+
+
+# ── State Transition Endpoints ────────────────────────────────────
 
 @rfq_bp.route("/<rfq_id>/publish", methods=["POST"])
 @jwt_required()
@@ -138,7 +172,10 @@ def update_rfq(rfq_id):
 def publish_rfq(rfq_id):
     """
     POST /api/v1/rfqs/<rfq_id>/publish
-    Publish a draft RFQ (status → open).
+    Publish a draft RFQ (status: draft → open).
+    Validates: deadline in future, at least 1 line item.
+    Sends rfq_invite notifications to all assigned vendors.
+    Accessible by: procurement_officer (creator), admin.
     """
     db = next(get_db())
     officer_id = get_current_user_id()
@@ -157,7 +194,8 @@ def publish_rfq(rfq_id):
 def close_rfq(rfq_id):
     """
     POST /api/v1/rfqs/<rfq_id>/close
-    Close an open RFQ (no more quotations).
+    Close an open RFQ (no more quotations accepted).
+    Accessible by: procurement_officer (creator), admin.
     """
     db = next(get_db())
     officer_id = get_current_user_id()
@@ -176,7 +214,8 @@ def close_rfq(rfq_id):
 def cancel_rfq(rfq_id):
     """
     POST /api/v1/rfqs/<rfq_id>/cancel
-    Cancel an RFQ.
+    Cancel an RFQ (from draft or open status).
+    Accessible by: procurement_officer (creator), admin.
     """
     db = next(get_db())
     officer_id = get_current_user_id()
@@ -189,14 +228,52 @@ def cancel_rfq(rfq_id):
         return error_response(str(e), 400)
 
 
+# ── Vendor Invite Endpoint ────────────────────────────────────────
+
 @rfq_bp.route("/<rfq_id>/invite-vendors", methods=["POST"])
 @jwt_required()
 @roles_required("procurement_officer", "admin")
 def invite_vendors(rfq_id):
     """
     POST /api/v1/rfqs/<rfq_id>/invite-vendors
-    Body: {"vendor_ids": ["uuid1", "uuid2"]}
     Invite additional vendors to an RFQ.
+    Body: {"vendor_ids": ["uuid1", "uuid2"]}
+    Accessible by: procurement_officer (creator), admin.
+    """
+    role = get_current_user_role()
+    if role not in ("procurement_officer", "admin", "manager"):
+        return error_response("Access denied.", 403)
+
+    data = request.get_json(silent=True)
+    if not data:
+        return error_response("Request body must be JSON.", 400)
+
+    errors = _vendor_invite_schema.validate(data)
+    if errors:
+        return error_response("Validation failed.", 422, errors=errors)
+
+    validated = _vendor_invite_schema.load(data)
+    officer_id = get_jwt_identity()
+
+    try:
+        svc = _get_rfq_service()
+        new_assignments = svc.invite_vendors(rfq_id, validated["vendor_ids"], officer_id)
+        return success_response(
+            {"invited_count": len(new_assignments)},
+            f"{len(new_assignments)} vendor(s) invited successfully.",
+        )
+    except AppError as e:
+        return error_response(e.message, e.status_code)
+    except Exception:
+        return error_response("Failed to invite vendors.", 500)
+
+
+# ── Serialisation Helper ──────────────────────────────────────────
+
+def _rfq_to_dict(rfq) -> dict:
+    """
+    Serialize an RFQ model to a response dict, including nested items
+    and vendor_assignments loaded via SQLAlchemy relationships.
     """
     db = next(get_db())
     vendor_ids = request.json.get("vendor_ids", [])
