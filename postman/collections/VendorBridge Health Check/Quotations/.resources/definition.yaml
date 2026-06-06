@@ -1,0 +1,3 @@
+$kind: collection
+name: Quotations
+description: 'Quotation endpoints — list quotations submitted against RFQs.'

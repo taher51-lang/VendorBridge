@@ -1,0 +1,3 @@
+$kind: collection
+name: RFQs
+description: 'Request for Quotation endpoints — list and create RFQs.'

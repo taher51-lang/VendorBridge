@@ -1,0 +1,3 @@
+$kind: collection
+name: Purchase Orders
+description: 'Purchase Order endpoints — list purchase orders.'

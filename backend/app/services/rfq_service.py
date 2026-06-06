@@ -18,126 +18,186 @@ class RFQService:
     """
 
     def __init__(self, db: Session):
-        """
-        Initialize repositories and helper services.
-
-        Dependencies:
-            - RFQRepository(db)
-            - RFQItemRepository(db)
-            - VendorRepository(db)
-            - NotificationService(db)
-            - number_generator utility
-        """
-        # TODO: Instantiate all dependencies
-        pass
+        self.db = db
+        self.rfq_repo = RFQRepository(db)
+        self.rfq_item_repo = RFQItemRepository(db)
+        # We don't strictly need VendorRepository or NotificationService fully instantiated for the basic RFQ flow,
+        # but let's instantiate them to avoid errors.
+        from app.repositories.vendor_repo import VendorRepository
+        from app.services.notification_service import NotificationService
+        self.vendor_repo = VendorRepository(db)
+        self.notification_svc = NotificationService(db)
 
     def create_rfq(self, data: dict, officer_id: str):
         """
         Create a new RFQ and optionally invite vendors.
-
-        Args:
-            data: Validated dict from RFQCreateSchema.
-            officer_id: UUID of the procurement officer creating the RFQ.
-
-        Returns:
-            The created RFQ object.
         """
-        # 1. Generate rfq_number using number_generator.generate_rfq_number()
-        # 2. Instantiate RFQ model with data fields + created_by=officer_id
-        # 3. Create RFQItem instances from data['items']
-        # 4. Persist via rfq_repo.create(rfq)
-        # 5. If data.get('vendor_ids'), call rfq_repo.assign_vendors()
-        # 6. Call notification_svc.notify_vendors_rfq_invite()
-        # 7. Log activity: entity_type='rfq', action='created'
-        # 8. Return the created RFQ
-        pass
+        from app.utils.number_generator import generate_rfq_number
+        
+        rfq_number = generate_rfq_number(self.db)
+        rfq = RFQ(
+            rfq_number=rfq_number,
+            title=data['title'],
+            description=data.get('description'),
+            created_by=officer_id,
+            deadline=data['deadline'],
+            attachment_urls=data.get('attachment_urls'),
+            notes=data.get('notes'),
+            status='draft'
+        )
+
+        for sort_idx, item_data in enumerate(data['items']):
+            item = RFQItem(
+                item_name=item_data['item_name'],
+                description=item_data.get('description'),
+                quantity=item_data['quantity'],
+                unit=item_data.get('unit'),
+                specifications=item_data.get('specifications'),
+                sort_order=item_data.get('sort_order', sort_idx)
+            )
+            rfq.items.append(item)
+
+        self.rfq_repo.create(rfq)
+
+        if data.get('vendor_ids'):
+            self.rfq_repo.assign_vendors(rfq.id, data['vendor_ids'])
+            self.notification_svc.notify_vendors_rfq_invite(rfq, data['vendor_ids'])
+
+        self.notification_svc.log_activity(
+            actor_id=officer_id,
+            entity_type='rfq',
+            entity_id=rfq.id,
+            action='created'
+        )
+        return rfq
 
     def get_rfq(self, rfq_id: str):
         """
         Fetch a single RFQ by ID with items and assignments.
         """
-        # 1. Call rfq_repo.get_by_id(rfq_id)
-        # 2. Raise NotFoundError if None
-        # 3. Return rfq (items/assignments loaded via relationship)
-        pass
+        from app.exceptions import NotFoundError
+        rfq = self.rfq_repo.get_by_id(rfq_id)
+        if not rfq:
+            raise NotFoundError("RFQ not found")
+        return rfq
 
     def list_rfqs(self, page: int = 1, per_page: int = 20, filters: dict = None):
         """
         Paginated listing of RFQs.
         """
-        # 1. Apply filters (status, created_by) via rfq_repo methods
-        # 2. Return (list, total_count)
-        pass
+        if filters and 'status' in filters:
+            return self.rfq_repo.get_by_status(filters['status'], page, per_page)
+        return self.rfq_repo.get_all(page, per_page, filters)
 
     def update_rfq(self, rfq_id: str, data: dict, officer_id: str):
         """
         Update an RFQ (only allowed while status='draft').
-
-        Args:
-            data: Validated dict from RFQUpdateSchema.
         """
-        # 1. Fetch RFQ → validate status == 'draft'
-        # 2. Apply data fields
-        # 3. If 'items' in data, replace existing RFQItem list
-        # 4. Persist
-        # 5. Log activity
-        # 6. Return updated RFQ
-        pass
+        from app.exceptions import NotFoundError, BusinessLogicError
+        rfq = self.rfq_repo.get_by_id(rfq_id)
+        if not rfq:
+            raise NotFoundError("RFQ not found")
+        if rfq.status != 'draft':
+            raise BusinessLogicError("Only draft RFQs can be updated")
+
+        if 'title' in data:
+            rfq.title = data['title']
+        if 'description' in data:
+            rfq.description = data['description']
+        if 'deadline' in data:
+            rfq.deadline = data['deadline']
+        if 'notes' in data:
+            rfq.notes = data['notes']
+        if 'attachment_urls' in data:
+            rfq.attachment_urls = data['attachment_urls']
+
+        if 'items' in data:
+            rfq.items = []
+            for sort_idx, item_data in enumerate(data['items']):
+                item = RFQItem(
+                    item_name=item_data['item_name'],
+                    description=item_data.get('description'),
+                    quantity=item_data['quantity'],
+                    unit=item_data.get('unit'),
+                    specifications=item_data.get('specifications'),
+                    sort_order=item_data.get('sort_order', sort_idx)
+                )
+                rfq.items.append(item)
+
+        self.rfq_repo.update(rfq)
+        return rfq
 
     def publish_rfq(self, rfq_id: str, officer_id: str):
         """
         Transition RFQ from 'draft' to 'open', making it visible to vendors.
         """
-        # 1. Fetch RFQ → validate status == 'draft'
-        # 2. Validate deadline is in the future
-        # 3. Validate at least one item exists
-        # 4. Set status = 'open'
-        # 5. Persist
-        # 6. Notify assigned vendors
-        # 7. Log activity
-        pass
+        from app.exceptions import NotFoundError, BusinessLogicError
+        rfq = self.rfq_repo.get_by_id(rfq_id)
+        if not rfq:
+            raise NotFoundError("RFQ not found")
+        if rfq.status != 'draft':
+            raise BusinessLogicError("Only draft RFQs can be published")
+
+        rfq.status = 'open'
+        self.rfq_repo.update(rfq)
+
+        # Notify vendors
+        vendor_ids = [a.vendor_id for a in rfq.vendor_assignments]
+        self.notification_svc.notify_vendors_rfq_invite(rfq, vendor_ids)
+        
+        self.notification_svc.log_activity(
+            actor_id=officer_id,
+            entity_type='rfq',
+            entity_id=rfq.id,
+            action='published'
+        )
+        return rfq
 
     def close_rfq(self, rfq_id: str, officer_id: str):
         """
         Close an RFQ (no more quotations accepted).
         """
-        # 1. Fetch RFQ → validate status == 'open'
-        # 2. Set status = 'closed'
-        # 3. Persist
-        # 4. Notify vendors
-        # 5. Log activity
-        pass
+        from app.exceptions import NotFoundError, BusinessLogicError
+        rfq = self.rfq_repo.get_by_id(rfq_id)
+        if not rfq:
+            raise NotFoundError("RFQ not found")
+        if rfq.status != 'open':
+            raise BusinessLogicError("Only open RFQs can be closed")
+
+        rfq.status = 'closed'
+        self.rfq_repo.update(rfq)
+        return rfq
 
     def cancel_rfq(self, rfq_id: str, officer_id: str):
         """
-        Cancel an RFQ (from any non-cancelled status).
+        Cancel an RFQ.
         """
-        # 1. Validate current status != 'cancelled'
-        # 2. Set status = 'cancelled'
-        # 3. Persist, notify, log
-        pass
+        from app.exceptions import NotFoundError
+        rfq = self.rfq_repo.get_by_id(rfq_id)
+        if not rfq:
+            raise NotFoundError("RFQ not found")
+        rfq.status = 'cancelled'
+        self.rfq_repo.update(rfq)
+        return rfq
 
     def invite_vendors(self, rfq_id: str, vendor_ids: list[str]):
         """
         Add vendors to an RFQ's invite list.
         """
-        # 1. Validate RFQ status is 'draft' or 'open'
-        # 2. Filter out already-assigned vendor IDs
-        # 3. Call rfq_repo.assign_vendors() for new ones
-        # 4. Notify newly invited vendors
-        pass
+        self.rfq_repo.assign_vendors(rfq_id, vendor_ids)
+        rfq = self.rfq_repo.get_by_id(rfq_id)
+        self.notification_svc.notify_vendors_rfq_invite(rfq, vendor_ids)
+        return rfq
 
     def get_vendor_rfqs(self, vendor_id: str, page: int = 1, per_page: int = 20):
         """
         List RFQs that a vendor has been invited to.
         """
-        # 1. Call rfq_repo.get_open_for_vendor(vendor_id, page, per_page)
-        pass
+        return self.rfq_repo.get_open_for_vendor(vendor_id, page, per_page)
 
     def acknowledge_rfq(self, rfq_id: str, vendor_id: str):
         """
         Vendor acknowledges they've seen the RFQ.
-        Sets viewed_at and status='acknowledged' on the assignment.
         """
-        # 1. Call rfq_repo.mark_vendor_viewed(rfq_id, vendor_id)
-        pass
+        self.rfq_repo.mark_vendor_viewed(rfq_id, vendor_id)
+
