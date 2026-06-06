@@ -16,11 +16,6 @@ class AppError(Exception):
     """Base class for all application errors."""
 
     def __init__(self, message: str = "An error occurred", status_code: int = 500):
-        """
-        Args:
-            message: Human-readable error description.
-            status_code: HTTP status code to return.
-        """
         self.message = message
         self.status_code = status_code
         super().__init__(self.message)
@@ -58,10 +53,6 @@ class ValidationError(AppError):
     """Raised when input data fails validation."""
 
     def __init__(self, message: str = "Validation error", errors: dict = None):
-        """
-        Args:
-            errors: Dict of field-level errors from Marshmallow.
-        """
         self.errors = errors or {}
         super().__init__(message, 422)
 
@@ -80,10 +71,8 @@ def register_error_handlers(app: Flask):
     Register global error handlers on the Flask app.
     Called by the app factory in app/__init__.py.
     """
-
     @app.errorhandler(AppError)
-    def handle_app_error(e: AppError):
-        """Handle all custom AppError subclasses."""
+    def handle_app_error(e):
         response = {"success": False, "message": e.message}
         if isinstance(e, ValidationError) and e.errors:
             response["errors"] = e.errors
@@ -91,13 +80,15 @@ def register_error_handlers(app: Flask):
 
     @app.errorhandler(404)
     def handle_404(e):
-        return jsonify({"success": False, "message": "The requested resource was not found."}), 404
+        return jsonify({"success": False, "message": "Not found"}), 404
 
     @app.errorhandler(405)
     def handle_405(e):
-        return jsonify({"success": False, "message": "Method not allowed."}), 405
+        return jsonify({"success": False, "message": "Method not allowed"}), 405
 
     @app.errorhandler(500)
     def handle_500(e):
-        logger.exception("Unhandled internal server error: %s", e)
-        return jsonify({"success": False, "message": "An internal server error occurred."}), 500
+        import logging
+        logging.exception("Unhandled server exception:")
+        return jsonify({"success": False, "message": "Internal server error"}), 500
+

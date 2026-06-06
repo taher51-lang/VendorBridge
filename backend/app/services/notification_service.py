@@ -4,13 +4,12 @@ VendorBridge ERP – Notification Service
 Handles in-app notifications and email dispatch coordination.
 """
 
-import logging
 from datetime import datetime, timezone
-
 from sqlalchemy.orm import Session
 
 from app.models.audit import Notification, ActivityLog
 from app.models.user import User
+from app.utils.email_sender import send_notification_email, send_password_reset as utils_send_password_reset
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +21,6 @@ class NotificationService:
     """
 
     def __init__(self, db: Session):
-        """
-        Initialize with DB session and email_sender utility.
-        """
         self.db = db
 
     def create_notification(
@@ -58,6 +54,7 @@ class NotificationService:
             entity_type=entity_type,
             entity_id=entity_id,
             is_read=False,
+            read_at=None
         )
         self.db.add(notification)
         self.db.commit()
@@ -75,36 +72,34 @@ class NotificationService:
         Returns:
             True if updated, False if not found or unauthorized.
         """
-        notification = (
-            self.db.query(Notification)
-            .filter(
-                Notification.id == notification_id,
-                Notification.user_id == user_id,
-                Notification.deleted_at.is_(None),
-            )
-            .first()
-        )
+        notification = self.db.query(Notification).filter(
+            Notification.id == notification_id,
+            Notification.deleted_at.is_(None)
+        ).first()
         if not notification:
-            return False
+            return None
+        if notification.user_id != user_id:
+            from app.exceptions import ForbiddenError
+            raise ForbiddenError("You are not authorized to read this notification.")
+        
         notification.is_read = True
         notification.read_at = datetime.now(timezone.utc)
         self.db.commit()
-        return True
+        return notification
 
     def mark_all_read(self, user_id: str) -> None:
         """
         Mark all unread notifications for a user as read.
         """
+        unread = self.db.query(Notification).filter(
+            Notification.user_id == user_id,
+            Notification.is_read == False,
+            Notification.deleted_at.is_(None)
+        ).all()
         now = datetime.now(timezone.utc)
-        (
-            self.db.query(Notification)
-            .filter(
-                Notification.user_id == user_id,
-                Notification.is_read.is_(False),
-                Notification.deleted_at.is_(None),
-            )
-            .update({"is_read": True, "read_at": now}, synchronize_session=False)
-        )
+        for notif in unread:
+            notif.is_read = True
+            notif.read_at = now
         self.db.commit()
 
     def get_user_notifications(
@@ -120,17 +115,14 @@ class NotificationService:
         Returns:
             Tuple of (notifications_list, total_count).
         """
-        query = (
-            self.db.query(Notification)
-            .filter(
-                Notification.user_id == user_id,
-                Notification.deleted_at.is_(None),
-            )
-            .order_by(Notification.created_at.desc())
+        query = self.db.query(Notification).filter(
+            Notification.user_id == user_id,
+            Notification.deleted_at.is_(None)
         )
         if unread_only:
-            query = query.filter(Notification.is_read.is_(False))
-
+            query = query.filter(Notification.is_read == False)
+        
+        query = query.order_by(Notification.created_at.desc())
         total = query.count()
         results = query.offset((page - 1) * per_page).limit(per_page).all()
         return results, total
@@ -139,15 +131,11 @@ class NotificationService:
         """
         Return the count of unread notifications for a user.
         """
-        return (
-            self.db.query(Notification)
-            .filter(
-                Notification.user_id == user_id,
-                Notification.is_read.is_(False),
-                Notification.deleted_at.is_(None),
-            )
-            .count()
-        )
+        return self.db.query(Notification).filter(
+            Notification.user_id == user_id,
+            Notification.is_read == False,
+            Notification.deleted_at.is_(None)
+        ).count()
 
     # ── Convenience methods for specific notification types ───────
 
@@ -161,71 +149,68 @@ class NotificationService:
             vendor_ids: List of Vendor UUIDs (not User UUIDs).
         """
         from app.models.vendor import Vendor
-
         for vendor_id in vendor_ids:
-            vendor = (
-                self.db.query(Vendor)
-                .filter(
-                    Vendor.id == vendor_id,
-                    Vendor.deleted_at.is_(None),
-                )
-                .first()
-            )
-            if not vendor or not vendor.user_id:
-                continue
-            try:
+            vendor = self.db.query(Vendor).filter(Vendor.id == vendor_id).first()
+            if vendor and vendor.user_id:
+                title = f"Invitation to bid for RFQ: {rfq.title}"
+                body = f"You have been invited to submit a quotation for RFQ {rfq.rfq_number}. Deadline is {rfq.deadline}."
                 self.create_notification(
                     user_id=vendor.user_id,
                     type="rfq_invite",
-                    title=f"New RFQ: {rfq.title}",
-                    body=(
-                        f"You have been invited to submit a quotation for RFQ "
-                        f"#{rfq.rfq_number}. Deadline: {rfq.deadline.strftime('%Y-%m-%d')}."
-                    ),
+                    title=title,
+                    body=body,
                     entity_type="rfq",
-                    entity_id=rfq.id,
+                    entity_id=rfq.id
                 )
-            except Exception:
-                # Non-fatal: log and continue so one bad vendor ID doesn't
-                # abort the entire publish flow.
-                logger.warning(
-                    "Failed to create rfq_invite notification for vendor %s", vendor_id,
-                    exc_info=True,
-                )
+                if vendor.user and vendor.user.email:
+                    send_notification_email(vendor.user.email, title, body)
 
     def notify_approval_required(self, workflow, approver_id: str) -> None:
         """
         Notify an approver that a workflow step is awaiting their action.
         """
-        self.create_notification(
-            user_id=approver_id,
-            type="approval_required",
-            title="Approval Required",
-            body=f"A workflow step is awaiting your approval.",
-            entity_type="approval_workflow",
-            entity_id=workflow.id,
-        )
+        user = self.db.query(User).filter(User.id == approver_id).first()
+        if user:
+            title = f"Approval Required for Quotation {workflow.quotation.quote_number}"
+            body = f"Quotation {workflow.quotation.quote_number} is selected and requires your approval step."
+            self.create_notification(
+                user_id=approver_id,
+                type="approval_required",
+                title=title,
+                body=body,
+                entity_type="approval_workflow",
+                entity_id=workflow.id
+            )
+            if user.email:
+                send_notification_email(user.email, title, body)
 
     def notify_po_issued(self, po) -> None:
         """
         Notify vendor that a PO has been issued.
         """
-        if po.vendor and po.vendor.user_id:
+        from app.models.vendor import Vendor
+        vendor = self.db.query(Vendor).filter(Vendor.id == po.vendor_id).first()
+        if vendor and vendor.user_id:
+            title = f"Purchase Order {po.po_number} Issued"
+            body = f"Purchase Order {po.po_number} has been issued to you for RFQ {po.rfq.rfq_number}."
             self.create_notification(
-                user_id=po.vendor.user_id,
+                user_id=vendor.user_id,
                 type="po_issued",
-                title=f"Purchase Order Issued: {po.po_number}",
-                body="A purchase order has been issued to you. Please review and confirm.",
+                title=title,
+                body=body,
                 entity_type="purchase_order",
-                entity_id=po.id,
+                entity_id=po.id
             )
+            if vendor.user and vendor.user.email:
+                send_notification_email(vendor.user.email, title, body)
 
     def send_password_reset(self, user: User, reset_link: str) -> None:
         """
         Send a password reset email.
         (Email integration deferred — logs to console in dev mode.)
         """
-        logger.info("[DEV] Password reset link for %s: %s", user.email, reset_link)
+        if user.email:
+            utils_send_password_reset(user.email, reset_link)
 
     # ── Audit Logging ─────────────────────────────────────────────
 
@@ -249,18 +234,13 @@ class NotificationService:
             metadata: Optional dict with old/new values.
             ip_address: Client IP (from request).
         """
-        try:
-            log = ActivityLog(
-                actor_id=actor_id,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                action=action,
-                metadata_=metadata,
-                ip_address=ip_address,
-            )
-            self.db.add(log)
-            self.db.commit()
-        except Exception:
-            # Audit logging is non-fatal — never let it break the request.
-            logger.warning("Failed to write activity log for %s/%s", entity_type, entity_id, exc_info=True)
-            self.db.rollback()
+        log = ActivityLog(
+            actor_id=actor_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action=action,
+            metadata_=metadata,
+            ip_address=ip_address
+        )
+        self.db.add(log)
+        self.db.commit()
