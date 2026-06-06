@@ -2,19 +2,30 @@
 VendorBridge ERP – RFQ Service
 ================================
 Business logic for creating, updating, and managing RFQs.
+Sits between rfq_routes and rfq repositories. Never touches the HTTP layer.
 """
+
+import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from app.repositories.rfq_repo import RFQRepository, RFQItemRepository
 from app.repositories.vendor_repo import VendorRepository
 from app.models.rfq import RFQ, RFQItem
+from app.services.notification_service import NotificationService
+from app.utils.number_generator import generate_rfq_number
+from app.exceptions.handlers import (
+    NotFoundError,
+    BusinessLogicError,
+    ForbiddenError,
+)
 
 
 class RFQService:
     """
     Handles all business logic related to RFQs.
-    Sits between routes and repositories.  Never touches the HTTP layer.
+    Sits between routes and repositories. Never touches the HTTP layer.
     """
 
     def __init__(self, db: Session):
@@ -28,7 +39,7 @@ class RFQService:
         self.vendor_repo = VendorRepository(db)
         self.notification_svc = NotificationService(db)
 
-    def create_rfq(self, data: dict, officer_id: str):
+    def create_rfq(self, data: dict, officer_id: str) -> RFQ:
         """
         Create a new RFQ and optionally invite vendors.
         """
@@ -71,9 +82,14 @@ class RFQService:
         )
         return rfq
 
-    def get_rfq(self, rfq_id: str):
+    # ── Read ──────────────────────────────────────────────────────
+
+    def get_rfq(self, rfq_id: str) -> RFQ:
         """
-        Fetch a single RFQ by ID with items and assignments.
+        Fetch a single RFQ by ID with items and assignments loaded via relationship.
+
+        Raises:
+            NotFoundError: If RFQ doesn't exist or is soft-deleted.
         """
         from app.exceptions import NotFoundError
         rfq = self.rfq_repo.get_by_id(rfq_id)
@@ -84,12 +100,36 @@ class RFQService:
     def list_rfqs(self, page: int = 1, per_page: int = 20, filters: dict = None):
         """
         Paginated listing of RFQs.
+
+        Supported filter keys: 'status', 'created_by'.
+
+        Returns:
+            Tuple of (list[RFQ], total_count).
+        """
+        filters = filters or {}
+
+        if filters.get("status"):
+            return self.rfq_repo.get_by_status(filters["status"], page, per_page)
+
+        if filters.get("created_by"):
+            return self.rfq_repo.get_by_creator(filters["created_by"], page, per_page)
+
+        return self.rfq_repo.get_all_paginated(page, per_page)
+
+    def get_vendor_rfqs(self, vendor_id: str, page: int = 1, per_page: int = 20):
+        """
+        List RFQs that a vendor has been invited to (all statuses).
+
+        Returns:
+            Tuple of (list[RFQ], total_count).
         """
         if filters and 'status' in filters:
             return self.rfq_repo.get_by_status(filters['status'], page, per_page)
         return self.rfq_repo.get_all(page, per_page, filters)
 
-    def update_rfq(self, rfq_id: str, data: dict, officer_id: str):
+    # ── Update ────────────────────────────────────────────────────
+
+    def update_rfq(self, rfq_id: str, data: dict, officer_id: str) -> RFQ:
         """
         Update an RFQ (only allowed while status='draft').
         """
@@ -127,9 +167,19 @@ class RFQService:
         self.rfq_repo.update(rfq)
         return rfq
 
-    def publish_rfq(self, rfq_id: str, officer_id: str):
+    def publish_rfq(self, rfq_id: str, officer_id: str) -> RFQ:
         """
         Transition RFQ from 'draft' to 'open', making it visible to vendors.
+
+        Validates:
+          - Status must be 'draft'
+          - Deadline must be in the future
+          - Must have at least one line item
+
+        Also sends 'rfq_invite' notifications to all assigned vendors.
+
+        Raises:
+            NotFoundError, ForbiddenError, BusinessLogicError.
         """
         from app.exceptions import NotFoundError, BusinessLogicError
         rfq = self.rfq_repo.get_by_id(rfq_id)
@@ -153,7 +203,9 @@ class RFQService:
         )
         return rfq
 
-    def close_rfq(self, rfq_id: str, officer_id: str):
+        return rfq
+
+    def close_rfq(self, rfq_id: str, officer_id: str) -> RFQ:
         """
         Close an RFQ (no more quotations accepted).
         """
@@ -180,22 +232,60 @@ class RFQService:
         self.rfq_repo.update(rfq)
         return rfq
 
-    def invite_vendors(self, rfq_id: str, vendor_ids: list[str]):
+    def cancel_rfq(self, rfq_id: str, officer_id: str) -> RFQ:
         """
-        Add vendors to an RFQ's invite list.
+        Cancel an RFQ (from any non-terminal status).
+
+        Raises:
+            NotFoundError, ForbiddenError, BusinessLogicError.
         """
         self.rfq_repo.assign_vendors(rfq_id, vendor_ids)
         rfq = self.rfq_repo.get_by_id(rfq_id)
         self.notification_svc.notify_vendors_rfq_invite(rfq, vendor_ids)
         return rfq
 
-    def get_vendor_rfqs(self, vendor_id: str, page: int = 1, per_page: int = 20):
+        if rfq.created_by != officer_id:
+            raise ForbiddenError("Only the RFQ creator can cancel this RFQ.")
+
+        TERMINAL_STATUSES = ("cancelled", "awarded", "closed")
+        if rfq.status in TERMINAL_STATUSES:
+            raise BusinessLogicError(
+                f"Cannot cancel RFQ in '{rfq.status}' status."
+            )
+
+        rfq.status = "cancelled"
+        self.rfq_repo.update(rfq)
+
+        self.notification_svc.log_activity(
+            actor_id=officer_id,
+            entity_type="rfq",
+            entity_id=rfq_id,
+            action="cancelled",
+        )
+
+        return rfq
+
+    # ── Vendor Invitation ─────────────────────────────────────────
+
+    def invite_vendors(self, rfq_id: str, vendor_ids: list, officer_id: str) -> list:
         """
-        List RFQs that a vendor has been invited to.
+        Add vendors to an existing RFQ's invite list.
+        Allowed when RFQ is in 'draft' or 'open' status.
+
+        Args:
+            rfq_id: The RFQ to add vendors to.
+            vendor_ids: List of Vendor UUID strings.
+            officer_id: Caller's user ID.
+
+        Returns:
+            List of newly created RFQVendorAssignment objects.
+
+        Raises:
+            NotFoundError, ForbiddenError, BusinessLogicError.
         """
         return self.rfq_repo.get_open_for_vendor(vendor_id, page, per_page)
 
-    def acknowledge_rfq(self, rfq_id: str, vendor_id: str):
+    def acknowledge_rfq(self, rfq_id: str, vendor_id: str) -> None:
         """
         Vendor acknowledges they've seen the RFQ.
         """

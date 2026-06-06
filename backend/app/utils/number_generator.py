@@ -1,6 +1,52 @@
+Generates unique, human-readable sequential numbers for
+RFQs, Quotations, POs, and Invoices.
+
+Format examples:
+    RFQ-2024-0001
+    QUO-2024-0001
+    PO-2024-0001
+    INV-2024-0001
+"""
+
+from datetime import datetime, timezone
+
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+
+def _next_sequence(db: Session, model_class, number_column: str, prefix: str) -> str:
+    """
+    Generic helper that finds the MAX sequence number for the current year
+    and returns the next formatted document number.
+
+    Uses a single MAX query for thread-safety under moderate load.
+    For high-concurrency environments, consider a DB sequence or advisory lock.
+    """
+    year = datetime.now(timezone.utc).year
+    year_prefix = f"{prefix}-{year}-"
+
+    # Fetch the latest number that matches this year's prefix
+    column = getattr(model_class, number_column)
+    row = (
+        db.query(column)
+        .filter(column.like(f"{year_prefix}%"))
+        .order_by(column.desc())
+        .first()
+    )
+
+    if row is None:
+        next_seq = 1
+    else:
+        # Extract the numeric suffix: "RFQ-2024-0042" → 42
+        latest_str = row[0]  # e.g. "RFQ-2024-0042"
+        try:
+            suffix = latest_str.rsplit("-", 1)[-1]
+            next_seq = int(suffix) + 1
+        except (ValueError, IndexError):
+            next_seq = 1
+
+    return f"{year_prefix}{next_seq:04d}"
+
 
 def generate_rfq_number(db: Session) -> str:
     """

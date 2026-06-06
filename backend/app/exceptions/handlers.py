@@ -4,7 +4,10 @@ VendorBridge ERP – Error Handlers
 Custom exception classes and Flask error handler registration.
 """
 
+import logging
 from flask import Flask, jsonify
+
+logger = logging.getLogger(__name__)
 
 
 # ── Custom Exception Classes ──────────────────────────────────────
