@@ -1,52 +1,84 @@
 """
 VendorBridge ERP – PDF Generator
 ==================================
-Uses WeasyPrint to render HTML templates into PDF documents.
-Primarily used for invoice PDF generation.
+Uses WeasyPrint to render Jinja2 HTML templates into PDF documents.
+Used for Invoice and Purchase Order PDF generation.
+
+Workflow:
+    invoice_data (dict)
+        → flask.render_template('invoice_template.html', **invoice_data)
+        → weasyprint.HTML(string=html).write_pdf(output_path)
+        → returns absolute file path of saved PDF
 """
 
 import os
 
+from flask import render_template, current_app
+
 
 def generate_invoice_pdf(invoice_data: dict, output_dir: str = None) -> str:
     """
-    Render an invoice as a PDF file.
+    Render an invoice as a PDF file using WeasyPrint.
 
     Args:
         invoice_data: Dict containing all invoice fields, items, and
-                      company/vendor info needed for the template.
+                      vendor info needed for invoice_template.html.
+        output_dir:   Directory to save the PDF. Defaults to
+                      app.config['PDF_OUTPUT_DIR'] ('generated_pdfs').
+
+    Returns:
+        The absolute file path of the generated PDF.
+
+    Raises:
+        Exception: Propagates WeasyPrint or filesystem errors to caller.
+    """
+    from weasyprint import HTML
+
+    if output_dir is None:
+        output_dir = current_app.config.get("PDF_OUTPUT_DIR", "generated_pdfs")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    invoice_number = invoice_data.get("invoice_number", "INV-UNKNOWN")
+    # Sanitise filename – strip characters not allowed in file names
+    safe_name = invoice_number.replace("/", "-").replace("\\", "-")
+    output_path = os.path.join(output_dir, f"{safe_name}.pdf")
+
+    # Render Jinja2 template to HTML string
+    html_string = render_template("invoice_template.html", **invoice_data)
+
+    # WeasyPrint converts HTML → PDF; base_url allows relative asset resolution
+    HTML(string=html_string, base_url=current_app.root_path).write_pdf(output_path)
+
+    return os.path.abspath(output_path)
+
+
+def generate_po_pdf(po_data: dict, output_dir: str = None) -> str:
+    """
+    Render a purchase order as a PDF file using WeasyPrint.
+
+    Args:
+        po_data:    Dict containing PO fields, vendor info, and line items.
+                    Used by po_template.html.
         output_dir: Directory to save the PDF. Defaults to
                     app.config['PDF_OUTPUT_DIR'].
 
     Returns:
         The absolute file path of the generated PDF.
-
-    Implementation:
-        1. Build output_dir from config if not provided.
-        2. Create the output directory if it doesn't exist.
-        3. Generate a unique filename: INV-{invoice_number}.pdf
-        4. Render the HTML template (use Jinja2 render_template or
-           render_template_string) with invoice_data context.
-        5. Call weasyprint.HTML(string=html).write_pdf(output_path)
-        6. Return output_path.
     """
-    # TODO: Implement PDF generation
-    # from weasyprint import HTML
-    # html = render_template('invoice_template.html', **invoice_data)
-    # HTML(string=html).write_pdf(output_path)
-    pass
+    from weasyprint import HTML
 
+    if output_dir is None:
+        output_dir = current_app.config.get("PDF_OUTPUT_DIR", "generated_pdfs")
 
-def generate_po_pdf(po_data: dict, output_dir: str = None) -> str:
-    """
-    Render a purchase order as a PDF file.
+    os.makedirs(output_dir, exist_ok=True)
 
-    Args:
-        po_data: Dict containing PO fields, vendor info, and quotation items.
-        output_dir: Directory to save the PDF.
+    po_number = po_data.get("po_number", "PO-UNKNOWN")
+    safe_name = po_number.replace("/", "-").replace("\\", "-")
+    output_path = os.path.join(output_dir, f"{safe_name}.pdf")
 
-    Returns:
-        The absolute file path of the generated PDF.
-    """
-    # TODO: Same pattern as invoice PDF
-    pass
+    html_string = render_template("po_template.html", **po_data)
+
+    HTML(string=html_string, base_url=current_app.root_path).write_pdf(output_path)
+
+    return os.path.abspath(output_path)
